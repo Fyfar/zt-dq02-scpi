@@ -136,7 +136,7 @@ Returns the most recent measurement plus all current settings as **17 comma-sepa
 | [15] | `%0.1f` | Tolerance percentage | `10.0` for ±10%; set by `COMParator:ERRor` |
 | [16] | `%d` | PASS/FAIL result | `1` = PASS, `0` = FAIL |
 
-> **field [16]** is only meaningful when the comparator is active (field [12] = 1). With the comparator off (field [12] = 0) it stays `0` regardless of NOMinal/ERRor. Enable the comparator over SCPI with the bare `COMParator` command (see below) — no front-panel menu needed.
+> **field [16]** only updates while the comparator is active (field [12] = 1). When the comparator is off (field [12] = 0) it **freezes at its last computed value** — it does not recompute and does not reset to 0, so a stale `1` or `0` can linger. Always confirm field [12] = 1 before trusting field [16]. Enable the comparator over SCPI with the bare `COMParator` command (see below) — no front-panel menu needed.
 
 ---
 
@@ -219,7 +219,7 @@ Reflected in field [8].
 
 > **Important caveats:**
 >
-> - **field [16] (PASS/FAIL) is only valid when the comparator is enabled (field [12] = 1).** With it off, field [16] reads `0` even when the part is in tolerance. Send the bare `COMParator` command to enable it.
+> - **field [16] (PASS/FAIL) is only valid when the comparator is enabled (field [12] = 1).** While disabled it freezes at its last computed value (stale) — it neither recomputes nor resets. Send the bare `COMParator` command to enable it, and verify field [12] = 1. This toggle is confirmed to drive the instrument itself: enabling it makes the device show `STD` / `TOL` / `PASS` (and a live deviation %, e.g. `+4.22%`) on screen; disabling it removes them.
 > - **`COMParator:ERRor` clamps at 40% over SCPI.** Verified: inputs of 50, 99, 99.9, 100, 200 all store as `40.0`. The instrument itself supports up to 99.9% via the front-panel menu — this is a limitation of the SCPI command only.
 > - `COMParator:RANGe` (write form) does not exist → `-110 Command header error`
 > - All comparator query commands (`COMParator?`, `COMParator:NOMinal?`, `COMParator:RESult?`, `COMParator:RANGe?`) return empty strings. Read comparator state via `FETCh?` fields [12]–[16] only.
