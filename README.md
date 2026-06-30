@@ -11,6 +11,7 @@ This document lets you control the ZT-DQ02 programmatically from a PC, automate 
 - [Hardware & Connection](#hardware--connection)
 - [Quick Start](#quick-start)
 - [Command Model](#command-model)
+- [Timing & Programming Notes](#timing--programming-notes)
 - [FETCh? — Reading All State](#fetch--reading-all-state)
 - [Measurement Commands](#measurement-commands)
   - [FREQuency](#frequency-)
@@ -95,6 +96,17 @@ print(cmd('FETCh?'))
 
 ---
 
+## Timing & Programming Notes
+
+All verified live:
+
+- **`FETCh?` is fast but cached.** It returns the last completed measurement in ~1 ms; it does not wait for a fresh conversion. The actual measurement refreshes about every **0.36 s** in MED/FAST and irregularly (0.3–4 s) in SLOW. **MED and FAST refresh at the same rate** on this hardware — FAST is not faster. To capture a genuinely new reading, poll `FETCh?` until field [0] changes, or wait ≥ 0.4 s between samples.
+- **Compound (semicolon) commands work.** `FREQuency;FETCh?` executes both in order and returns the FETCh? value on one line — handy to cycle a setting and read back atomically.
+- **Many standard SCPI subsystems are not implemented.** `MEASure?`, `INITiate`, `TRIGger`, `CALCulate`, `DISPlay`, `SENSe`, `OUTPut`, `INPut` all return `-110 Command header error`. There is no trigger model — `FETCh?` is the only read path.
+- **Numeric inputs reject unit suffixes.** Values must be bare floats; `47uF`, `0.047m`, etc. raise `-120 Numeric data error`.
+
+---
+
 ## FETCh? — Reading All State ✓
 
 Returns the most recent measurement plus all current settings as **17 comma-separated fields**.
@@ -124,7 +136,7 @@ Returns the most recent measurement plus all current settings as **17 comma-sepa
 | [15] | `%0.1f` | Tolerance percentage | `10.0` for ±10%; set by `COMParator:ERRor` |
 | [16] | `%d` | PASS/FAIL result | `1` = PASS, `0` = FAIL |
 
-> **field [16]** is computed from NOMinal and ERRor% continuously, even when the tolerance display is off (field [12] = 0). Use it for automated pass/fail without enabling the screen display.
+> **field [16]** is only meaningful when the comparator is active (field [12] = 1). With the comparator off (field [12] = 0) it stays `0` regardless of NOMinal/ERRor. Enable the comparator over SCPI with the bare `COMParator` command (see below) — no front-panel menu needed.
 
 ---
 
@@ -148,7 +160,7 @@ Reflected in field [10].
 ### BIAS:VOLTage ✓
 Toggles DC bias: `0 mV (off) ↔ 500 mV (on)` — fixed level, cannot be adjusted.
 
-Reflected in field [11]. Used for measuring polarized electrolytic capacitors (ECAP mode applies this automatically).
+Reflected in field [11]. Used for measuring polarized electrolytic capacitors. ECAP mode enables it automatically, but the toggle still works in ECAP mode — verified: a 47 µF cap read ~30 µF with bias on vs. ~167 µF with bias off, so leave bias on for electrolytics.
 
 ---
 
@@ -199,44 +211,55 @@ Reflected in field [8].
 
 | Command | Verified | Notes |
 |---------|----------|-------|
-| `COMParator ON` | ✓ | Arms comparator parameters |
-| `COMParator OFF` | ✓ | Disarms |
-| `COMParator` (no param) | ✓ | Toggles ON/OFF |
-| `COMParator:NOMinal <value>` | ✓ | Sets reference value |
-| `COMParator:ERRor <pct>` | ✓ | Sets tolerance %; range 0–40 (≥41 clamps to 40) |
+| `COMParator` (no param) | ✓ | **Toggles the comparator on/off** — flips field [12] between `1` and `0`. This enables PASS/FAIL over SCPI without the front-panel menu. |
+| `COMParator ON` / `COMParator OFF` | ✓ | Accepted with a boolean argument; the reliable way to switch the on-screen comparator is the bare `COMParator` toggle above |
+| `COMParator:NOMinal <value>` | ✓ | Sets reference value — **mode-scaled units, see below** |
+| `COMParator:ERRor <pct>` | ✓ | Sets tolerance %. **SCPI clamps to 40** (any value ≥ 40 becomes 40). The front-panel menu allows up to 99.9%. |
 | `COMParator:RANGe?` | ✓ | Accepted; returns empty |
 
 > **Important caveats:**
 >
+> - **field [16] (PASS/FAIL) is only valid when the comparator is enabled (field [12] = 1).** With it off, field [16] reads `0` even when the part is in tolerance. Send the bare `COMParator` command to enable it.
+> - **`COMParator:ERRor` clamps at 40% over SCPI.** Verified: inputs of 50, 99, 99.9, 100, 200 all store as `40.0`. The instrument itself supports up to 99.9% via the front-panel menu — this is a limitation of the SCPI command only.
 > - `COMParator:RANGe` (write form) does not exist → `-110 Command header error`
 > - All comparator query commands (`COMParator?`, `COMParator:NOMinal?`, `COMParator:RESult?`, `COMParator:RANGe?`) return empty strings. Read comparator state via `FETCh?` fields [12]–[16] only.
 > - `COMParator:ERRor?` → `-110 Command header error` (query form absent in firmware)
-> - `COMParator ON/OFF` arms internal parameters but does **not** change field [12] and does **not** show PASS/FAIL on the display. The front-panel menu is required to activate the on-screen tolerance display.
 > - Tolerance does **not** work in AUTO mode.
 
-### COMParator:NOMinal — shared storage
+### COMParator:NOMinal — mode-scaled units, shared storage
 
-One nominal value is stored as a raw SI float, shared across all measurement modes. Setting it in any mode overwrites it for all modes. Field [14] displays with mode-appropriate units:
+The value you send is **not in SI base units** — it is scaled by the active mode. One raw number is stored and shared across all modes (setting it in any mode overwrites it everywhere); field [14] then displays it with that mode's scale:
 
-| MAIN mode | Display unit |
-|-----------|-------------|
-| `R`, `Z` | Ω |
-| `C`, `ECAP`, `AUTO` | F |
-| `L` | H |
-| `BAT` | N/A — not used |
+| MAIN mode | Input unit | Example: set 47 µF / 1 kΩ / 831 µH |
+|-----------|-----------|-------------------------------------|
+| `R`, `Z` | **ohms (Ω)** — 1:1 | `COMParator:NOMinal 1000` → 1 kΩ |
+| `C`, `ECAP`, `AUTO` | **nanofarads (nF)** ×10⁻⁹ | `COMParator:NOMinal 47000` → 47 µF |
+| `L` | **microhenries (µH)** ×10⁻⁶ | `COMParator:NOMinal 831` → 831 µH |
+| `BAT` | N/A — accepted but ignored | — |
 
-Set the nominal while in the target mode. Scientific notation is accepted: `COMParator:NOMinal 470e-12`
+> This is the key gotcha vs. the front-panel: the device keypad lets you type `47µF` directly, but over SCPI the C-mode unit is **nanofarads**. `COMParator:NOMinal 47e-6` does **not** mean 47 µF — it is read as 0.000047 nF ≈ 0. Use `47000`.
+
+**Fractional values are accepted** (it is a float, not an integer): in C mode `COMParator:NOMinal 0.5` → 500 pF, `1000.5` → 1.0005 µF. **Unit suffixes are rejected:** `47uF` or `0.047m` → `-120 Numeric data error; 'u'/'m' not allowed in FLOAT`.
 
 ### Automated Pass/Fail Workflow
 
-No screen or physical interaction required:
+No physical interaction required — enable the comparator over SCPI first:
 
 ```
-COMParator:NOMinal 1000   # reference: 1 kΩ
-COMParator:ERRor 5        # ±5% tolerance
-# insert component
+# --- resistor sorting, 1 kΩ ±5% (R mode) ---
+COMParator:NOMinal 1000   # 1 kΩ  (R/Z mode: ohms, 1:1)
+COMParator:ERRor 5        # ±5% tolerance (max 40 over SCPI)
+COMParator                # toggle comparator ON — confirm field [12] = 1
 FETCh?                    # field [16]: 1 = PASS, 0 = FAIL
+
+# --- capacitor sorting, 47 µF ±20% (C / ECAP mode) ---
+COMParator:NOMinal 47000  # 47 µF expressed in NANOFARADS
+COMParator:ERRor 20
+COMParator                # ensure field [12] = 1
+FETCh?                    # field [16]
 ```
+
+Verify field [12] = 1 in the FETCh? output before trusting field [16]; if it reads 0, send `COMParator` once more to toggle it on. Verified live: with the nominal matching the reading, field [16] = 1; at 2× the nominal with ±5%, field [16] = 0.
 
 ### BAT Mode Tolerance
 
