@@ -101,6 +101,7 @@ print(cmd('FETCh?'))
 All verified live:
 
 - **`FETCh?` is fast but cached.** It returns the last completed measurement in ~1 ms; it does not wait for a fresh conversion. The actual measurement refreshes about every **0.36 s** in MED/FAST and irregularly (0.3–4 s) in SLOW. **MED and FAST refresh at the same rate** on this hardware — FAST is not faster. To capture a genuinely new reading, poll `FETCh?` until field [0] changes, or wait ≥ 0.4 s between samples.
+- **Over-range is reported as the token `0L`, not as a SCPI error.** When the DUT exceeds the active range (e.g. a 5.9 mH inductor at 100 kHz, whose ~3.7 kΩ reactance overflows AUTO range), fields [0] and [1] contain the literal string `0L` (with trailing spaces) instead of a number. `SYSTem:ERRor?` still returns `0,"No error"` — the overload is **not** queued. Two pitfalls: (a) after changing frequency/range it takes a moment to settle into `0L`, and during that window `FETCh?` returns the stale in-range value, so **poll until the reading stabilizes**; (b) always test field [0] for `0L` before parsing it as a float. Clear an overload by selecting an appropriate frequency or a manual range with `FUNCtion:IMPedance:RANGe`.
 - **Compound (semicolon) commands work.** `FREQuency;FETCh?` executes both in order and returns the FETCh? value on one line — handy to cycle a setting and read back atomically.
 - **Many standard SCPI subsystems are not implemented.** `MEASure?`, `INITiate`, `TRIGger`, `CALCulate`, `DISPlay`, `SENSe`, `OUTPut`, `INPut` all return `-110 Command header error`. There is no trigger model — `FETCh?` is the only read path.
 - **Numeric inputs reject unit suffixes.** Values must be bare floats; `47uF`, `0.047m`, etc. raise `-120 Numeric data error`.
@@ -118,8 +119,8 @@ Returns the most recent measurement plus all current settings as **17 comma-sepa
 
 | Field | Format | Content | Example values |
 |-------|--------|---------|----------------|
-| [0] | `%s%s` | Primary value + unit | `1.2345e-9F`, `987.3R` |
-| [1] | `%s%s` | Secondary value + unit | `-1.28X`, `0.001D` |
+| [0] | `%s%s` | Primary value + unit | `1.2345e-9F`, `987.3R`; `0L` = over-range (see Timing notes) |
+| [1] | `%s%s` | Secondary value + unit | `-1.28X`, `0.001D`; `0L` when primary is over-range |
 | [2] | `%s` | MAIN function | `AUTO` `R` `C` `L` `Z` `ECAP` `BAT` |
 | [3] | `%s` | Primary parameter label | `R` `C` `L` `Z` `V` |
 | [4] | `%s` | Secondary parameter label | `D` `Q` `X` `P` `R` |
