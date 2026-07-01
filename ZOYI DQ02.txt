@@ -1,0 +1,327 @@
+#idString ZOYI,ZT-DQ02,
+#name ZOYI DQ02
+#handle DQ02
+#port comfixedbaud
+#baudrate 9600N81
+#eol \r\n
+
+; ============================================================
+; ZOYI ZT-DQ02 LCR Meter — TestController device definition
+;
+; Key device behaviors (firmware-verified):
+;  - Instrument CONTROL commands are cycle-only: each call advances to
+;    the next value in a fixed sequence. No direct-set path for mode,
+;    frequency, speed, range, model, voltage, or bias.
+;    Exception: COMParator:NOMinal and COMParator:ERRor accept values.
+;  - FETCh? is the ONLY state reader, returning 17 comma-separated
+;    fields. Individual query commands (FREQuency?, APERture?, etc.)
+;    all return empty strings.
+;  - Over-range: fields [0] and [1] contain literal "0L" (not a number).
+;    Parse carefully — SYSTem:ERRor? still returns "No error" on OL.
+;  - MED and FAST aperture have identical sample rate (~0.36 s).
+;  - COMParator:NOMinal units depend on mode:
+;      R / Z       → ohms (1:1),  e.g. 1000 = 1 kΩ
+;      C / ECAP    → nanofarads,  e.g. 47000 = 47 µF
+;      L           → microhenries, e.g. 1000 = 1 mH
+;  - COMParator:ERRor is capped at 40 % over SCPI (front panel: 99.9 %).
+;  - field[16] (PASS/FAIL) freezes when comparator is off (field[12]=0).
+;    Always verify CompEnable before trusting CompResult.
+; ============================================================
+
+; --- Primary measurement value (selector = field[3] canonical type) ---
+#value Capacitance F SI C
+#value Inductance H SI L
+#value Resistance Ohm SI R,Z
+#value BatVoltage V SI V
+
+; --- Secondary measurement (field[1], always shown) ---
+#value Secondary - D4
+
+; --- Settings captured from FETCh? fields 9, 10, 11 ---
+#value Frequency Hz SI
+#value Amplitude mV D0
+#value Bias mV D0
+
+; --- FETCh? returns 17 comma-separated fields.
+; Format codes: f=float, x=skip.
+; Positions captured: [0]=primary, [1]=secondary,
+;                     [9]=freq, [10]=amplitude, [11]=bias
+#askValues :FETCh?
+#askValuesReadFormat ffxxxxxxxfffxxxxx
+#readingDelay 2
+#modeChangeDelay 3
+
+; --- Mode detection via field[3]: C / L / R / Z / V ---
+; (AUTO and ECAP both present C; BAT presents V)
+#askMode :FETCh?
+#askModeMathFormat trim(getElement(value,3,","))
+#modeFromValue trim(getElement(value,3,","))
+
+; ============================================================
+; MEASUREMENT FUNCTION (page: Measurement)
+; Cycle order: AUTO → R → C → L → Z → ECAP → BAT → repeat
+; ============================================================
+
+; Current function from field[2]
+#cmdSetup info MeasFunc Measurement
+:read: :FETCh?
+:readmath: trim(getElement(value,2,","))
+:string:
+:tip: Active function: AUTO / R / C / L / Z / ECAP / BAT
+
+Function
+
+; Advance to next measurement function
+#cmdSetup button CycleFunc Measurement
+:write: :FUNCtion:IMPedance:MAIN
+:update: MeasFunc SubParam CircuitEff CompParam BiasVolt
+:buttontext: Cycle Function
+:tip: AUTO → R → C → L → Z → ECAP → BAT → repeat
+
+; Secondary parameter from field[4]
+#cmdSetup info SubParam Measurement
+:read: :FETCh?
+:readmath: trim(getElement(value,4,","))
+:string:
+:tip: Secondary param: D=dissipation  Q=quality  X=reactance  P=phase  R=ESR/resistance
+
+Secondary
+
+; Advance secondary parameter (order is mode-dependent; no effect in BAT)
+#cmdSetup button CycleSub Measurement
+:write: :FUNCtion:IMPedance:SUB
+:update: SubParam
+:buttontext: Cycle Secondary
+:tip: Cycles secondary parameter. Order depends on MAIN function. Has no effect in BAT mode.
+
+; Circuit model selection from field[5]
+#cmdSetup info CircuitSel Measurement
+:read: :FETCh?
+:readmath: trim(getElement(value,5,","))
+:string:
+:tip: Circuit model selection: PAR / SER / AUTO
+
+Model-sel
+
+; Effective model after AUTO resolution from field[6]
+#cmdSetup info CircuitEff Measurement
+:read: :FETCh?
+:readmath: trim(getElement(value,6,","))
+:string:
+:tip: Effective circuit model (PAR or SER). AUTO resolves based on component type.
+
+Model-eff
+
+; Advance circuit model
+#cmdSetup button CycleModel Measurement
+:write: :FUNCtion:IMPedance:Model
+:update: CircuitSel CircuitEff
+:buttontext: Cycle Model
+:tip: PAR → SER → AUTO → repeat
+
+; ============================================================
+; SIGNAL SETTINGS (page: Signal)
+; ============================================================
+
+; --- Frequency ---
+; Current test frequency from field[9]
+#cmdSetup info MeasFreq Signal
+:read: :FETCh?
+:readmath: trim(getElement(value,9,","))
+:tip: Test frequency in Hz. 120 Hz available for 60 Hz mains-harmonic testing.
+Hz
+Frequency
+
+; Advance test frequency
+#cmdSetup button CycleFreq Signal
+:write: :FREQuency
+:update: MeasFreq
+:buttontext: Cycle Frequency
+:tip: 100 → 120 → 1000 → 10000 → 100000 Hz → repeat
+
+; --- Aperture / Speed ---
+; Current speed from field[7]
+#cmdSetup info MeasSpeed Signal
+:read: :FETCh?
+:readmath: trim(getElement(value,7,","))
+:string:
+:tip: Measurement speed. NOTE: MED and FAST have identical sample rate (~0.36 s) on this hardware.
+
+Speed
+
+; Advance speed
+#cmdSetup button CycleSpeed Signal
+:write: :APERture
+:update: MeasSpeed
+:buttontext: Cycle Speed
+:tip: SLOW → MED → FAST → repeat. MED and FAST refresh at the same rate on ZT-DQ02.
+
+; --- Impedance Range ---
+; Current range from field[8]
+#cmdSetup info MeasRange Signal
+:read: :FETCh?
+:readmath: trim(getElement(value,8,","))
+:string:
+:tip: Impedance range (Ω). Use AUTO normally; select manual range to recover from OL overload.
+
+Range
+
+; Advance impedance range
+#cmdSetup button CycleRange Signal
+:write: :FUNCtion:IMPedance:RANGe
+:update: MeasRange
+:buttontext: Cycle Range
+:tip: AUTO → 100 → 1000 → 10000 → 100000 Ω → repeat
+
+; --- Test Signal Voltage ---
+; Current AC amplitude from field[10]
+#cmdSetup info TestVolt Signal
+:read: :FETCh?
+:readmath: trim(getElement(value,10,","))
+:tip: AC test signal amplitude (mV): 100 / 300 / 600 mV
+mV
+Amplitude
+
+; Advance AC voltage
+#cmdSetup button CycleVolt Signal
+:write: :VOLTage
+:update: TestVolt
+:buttontext: Cycle Voltage
+:tip: 100 → 300 → 600 mV → repeat
+
+; --- DC Bias Voltage ---
+; Current bias from field[11]: 0=off, 500=on
+#cmdSetup info BiasVolt Signal
+:read: :FETCh?
+:readmath: trim(getElement(value,11,","))
+:tip: DC bias: 0=off, 500=on (fixed 500 mV level). ECAP mode enables bias automatically.
+mV
+DC Bias
+
+; Toggle DC bias
+#cmdSetup button ToggleBias Signal
+:write: :BIAS:VOLTage
+:update: BiasVolt
+:buttontext: Toggle Bias
+:tip: Toggle DC bias OFF (0 mV) / ON (500 mV). For electrolytic caps: leave ON. ECAP sets it automatically.
+
+; ============================================================
+; COMPARATOR — Pass/Fail testing (page: Comparator)
+;
+; Workflow:
+;  1. Set CompNominal (value in mode-correct units)
+;  2. Set CompError (tolerance %)
+;  3. Check CompEnable to activate
+;  4. Read CompResult: 1=PASS, 0=FAIL
+;
+; WARNING: field[16] FREEZES when comparator is off.
+; Always verify CompEnable is checked before trusting CompResult.
+; ============================================================
+
+; Enable/disable comparator — reads field[12], writes COMParator 0/1
+; (device also accepts COMParator ON/OFF; SCPI bool 0/1 is equivalent)
+#cmdSetup checkbox CompEnable Comparator
+:read: :FETCh?
+:readmath: trim(getElement(value,12,","))
+:write: :COMParator #
+:update: CompResult CompParam CompNomDisp CompTolDisp
+:tip: Enable comparator. PASS/FAIL in CompResult only valid when this is checked (field[12]=1). Result freezes when off.
+Comparator 0 1
+
+; Nominal reference value — direct-set command (not a cycle command)
+; Unit depends on active mode (read CompParam for current mode):
+;   R / Z mode    → ohms         e.g. 1000 = 1 kΩ
+;   C / ECAP mode → nanofarads   e.g. 47000 = 47 µF   (NOT microfarads)
+;   L mode        → microhenries  e.g. 1000 = 1 mH
+; Bare float ONLY — suffixes like u, m, k raise -120 numeric error
+#cmdSetup number CompNominal Comparator
+:write: :COMParator:NOMinal #
+:update: CompNomDisp
+:tip: Nominal value. R/Z: ohms; C/ECAP: nF (47000=47µF); L: µH (1000=1mH). Bare float only — no unit suffix.
+val 0 1000000000
+
+; Tolerance percentage — direct-set command (not a cycle command)
+; SCPI firmware clamps any value >= 40 to exactly 40.0 %
+; (front-panel menu allows up to 99.9 %; SCPI limitation only)
+#cmdSetup number CompError Comparator
+:read: :FETCh?
+:readmath: trim(getElement(value,15,","))
+:write: :COMParator:ERRor #
+:update: CompTolDisp
+:tip: Tolerance ±%. SCPI clamps any value >=40 to 40.0. Front-panel menu allows up to 99.9%.
+% 0 40
+
+; PASS/FAIL result from field[16]: 1=PASS, 0=FAIL
+#cmdSetup info CompResult Comparator
+:read: :FETCh?
+:readmath: trim(getElement(value,16,","))
+:tip: 1=PASS, 0=FAIL. ONLY valid when CompEnable is checked (field[12]=1). Stale value lingers when disabled.
+
+Result
+
+; Comparator parameter type from field[13]: R / C / L
+#cmdSetup info CompParam Comparator
+:read: :FETCh?
+:readmath: trim(getElement(value,13,","))
+:string:
+:tip: Comparator is measuring: R / C / L (tracks the active MAIN function)
+
+Comp-param
+
+; Nominal value as formatted by device from field[14] (e.g. "1.0000e3R")
+#cmdSetup info CompNomDisp Comparator
+:read: :FETCh?
+:readmath: trim(getElement(value,14,","))
+:string:
+:tip: Nominal value as stored and displayed by the device (includes unit code suffix)
+
+Nominal
+
+; Stored tolerance from field[15] (e.g. "10.0")
+#cmdSetup info CompTolDisp Comparator
+:read: :FETCh?
+:readmath: trim(getElement(value,15,","))
+:tip: Tolerance % currently stored in the device (as set by CompError or front-panel menu)
+%
+Tolerance
+
+; ============================================================
+; DEVICE UTILITIES (page: Info)
+; ============================================================
+
+; Device identification
+#cmdSetup info DeviceID Info
+:read: :*IDN?
+:string:
+:tip: ZOYI,ZT-DQ02,<8-hex-serial>,V<version>
+
+IDN
+
+; SCPI implementation version
+#cmdSetup info SysVersion Info
+:read: :SYSTem:VERSion?
+:string:
+:tip: SCPI version implemented by device firmware (returns 1999.0)
+
+SCPI ver
+
+; Oldest error in queue (dequeues on read)
+#cmdSetup info SysError Info
+:read: :SYSTem:ERRor?
+:string:
+:tip: Dequeue oldest error. Returns 0,"No error" when queue is empty. -110=bad header, -120=bad number.
+
+Last error
+
+; Clear event status registers
+#cmdSetup button ClearStatus Info
+:write: :*CLS
+:buttontext: Clear Status (*CLS)
+:tip: Clear ESR and STB event status registers. Does NOT reset measurement settings.
+
+; Clear SCPI error queue
+#cmdSetup button ClearErrors Info
+:write: :SYSTem:ERRor:CLEAR
+:update: SysError
+:buttontext: Clear Error Queue
+:tip: Flush all entries from the SCPI error queue (SYSTem:ERRor:CLEAR).

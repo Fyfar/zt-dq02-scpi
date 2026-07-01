@@ -8,6 +8,7 @@ This document lets you control the ZT-DQ02 programmatically from a PC, automate 
 
 ## Table of Contents
 
+- [TestController Integration](#testcontroller-integration)
 - [Hardware & Connection](#hardware--connection)
 - [Quick Start](#quick-start)
 - [Command Model](#command-model)
@@ -31,6 +32,28 @@ This document lets you control the ZT-DQ02 programmatically from a PC, automate 
 - [STATus Commands](#status-commands-)
 - [Unused Library Commands](#commands-present-but-unused)
 - [Firmware Analysis Notes](#firmware-analysis-notes)
+
+---
+
+## TestController Integration
+
+A ready-made device definition for [TestController](https://lygte-info.dk/project/TestControllerConfigDevice%20UK.html) (a free Java app for automated LCR/multimeter/PSU control) is included as **`ZOYI DQ02.txt`**. No SCPI knowledge required to use it.
+
+**Setup (one time):**
+1. Copy `ZOYI DQ02.txt` into TestController's `devices/` folder.
+2. Launch TestController, select the device from the list, pick the correct COM port.
+3. Connect the meter via USB — it appears as a CDC serial port at 9600 8N1.
+
+**What the config exposes:**
+
+| Page | Controls |
+|------|----------|
+| **Measurement** | Current function display + Cycle Function button (AUTO→R→C→L→Z→ECAP→BAT); secondary parameter display + Cycle Secondary; circuit model selection/effective display + Cycle Model |
+| **Signal** | Frequency display + Cycle (100/120/1k/10k/100k Hz); speed display + Cycle (SLOW/MED/FAST); range display + Cycle (AUTO/100/1k/10k/100k Ω); AC voltage display + Cycle (100/300/600 mV); DC bias display + Toggle |
+| **Comparator** | Enable checkbox; Nominal value input; Tolerance % input (0–40); PASS/FAIL result; parameter type, nominal, and tolerance readbacks |
+| **Info** | Device IDN; SCPI version; error queue readout; Clear Status and Clear Error Queue buttons |
+
+> **Note on controls:** All instrument settings (function, frequency, speed, range, model, voltage, bias) are **cycle-only** — there is no direct-set path in the firmware. Each button press advances to the next value in the fixed sequence. The comparator nominal and tolerance inputs are the only direct-entry fields.
 
 ---
 
